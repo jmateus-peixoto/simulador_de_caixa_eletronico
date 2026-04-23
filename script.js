@@ -55,6 +55,7 @@ const state = {
   cashDispensed: false,
   receiptDispensed: false,
   noCardAccessValidated: false,
+  noCardAccessRequested: false,
   termsAccepted: false,
   activeModal: "introWarning",
   onboardingActive: false,
@@ -223,6 +224,7 @@ function resetSessionArtifacts({ keepSelection = false } = {}) {
   clearHardwareAnimation();
   clearDispensedItems({ keepSelection });
   state.noCardAccessValidated = false;
+  state.noCardAccessRequested = false;
   state.historyStack = [];
 }
 
@@ -611,16 +613,14 @@ function renderModal() {
           aria-describedby="biometricQuestionDescription"
         >
           <span class="modal-eyebrow">Biometria</span>
-          <h2 id="biometricQuestionTitle">Você lembra qual biometria cadastrou?</h2>
+          <h2 id="biometricQuestionTitle">Acesso sem cartão selecionado</h2>
           <p id="biometricQuestionDescription">
-            Caso esteja sem cartão, a autenticação será realizada por biometria. Se lembrar do cadastro, utilize o leitor biométrico à direita, logo abaixo da tela.
+            Para continuar, toque no leitor biométrico à direita, logo abaixo da tela.
+            Você pode usar dedo ou palma da mão.
           </p>
-          <div class="modal-actions">
-            <button class="modal-button primary" type="button" data-biometric-choice="remember">
-              Lembro
-            </button>
-            <button class="modal-button outlined" type="button" data-biometric-choice="unknown">
-              Não lembro
+          <div class="modal-actions modal-actions-center">
+            <button class="modal-button primary" type="button" data-biometric-choice="continue">
+              Entendi
             </button>
           </div>
         </section>
@@ -674,6 +674,7 @@ function openBiometricQuestionModal() {
 
 function beginNoCardAccessFlow() {
   state.hasCardPreference = false;
+  state.noCardAccessRequested = true;
   openBiometricQuestionModal();
 }
 
@@ -694,7 +695,7 @@ function showBiometricRememberNotice() {
 }
 
 function startBiometricHardwareFlow(type) {
-  if (state.cardInserted || isInteractionLocked() || !state.termsAccepted) {
+  if (state.cardInserted || isInteractionLocked() || !state.termsAccepted || !state.noCardAccessRequested) {
     return;
   }
 
@@ -703,6 +704,7 @@ function startBiometricHardwareFlow(type) {
   state.historyStack = [];
   state.hasCardPreference = false;
   state.noCardAccessValidated = true;
+  state.noCardAccessRequested = false;
   updateMachineStatus();
 
   playHardwareAnimation(type, () => {
@@ -1242,7 +1244,7 @@ function getCurrentScreen() {
               <div class="message-layout">
                 <div class="screen-message-box">
                   <p>Retire agora o seu dinheiro.</p>
-                  <p>Use o novo compartimento abaixo da leitora de cartão.</p>
+                  <p>Use o compartimento abaixo da leitora de cartão.</p>
                 </div>
                 ${renderTouchNote()}
               </div>
@@ -1253,7 +1255,7 @@ function getCurrentScreen() {
     },
     withdrawAnother() {
       const options = normalizeOptions([
-        { slot: "l4", label: "Não", action: () => showThanksThenHome() },
+        { slot: "l4", label: "Não", action: () => beginCardRemoval("endSession") },
         { slot: "r4", label: "Sim", action: () => restartFromHome() }
       ]);
 
@@ -1570,7 +1572,7 @@ function completeWithdraw() {
   const amount = state.selectedAmount || 0;
   account.balance -= amount;
   recordHistory(`Saque ${formatCurrency(amount)}`, -amount);
-  beginCardRemoval("dispenseCash");
+  beginCashDispense();
 }
 
 function beginCashDispense() {
@@ -1596,9 +1598,9 @@ function takeReceiptFromSlot() {
 
 function restartFromHome() {
   resetSessionArtifacts();
-  state.cardInserted = false;
+  state.cardInserted = true;
   state.nextCardAction = null;
-  goTo("home", { push: false });
+  goTo("bankMenu", { push: false });
 }
 
 function showThanksThenHome() {
@@ -1638,6 +1640,7 @@ function takeCardFromReader() {
 function startCardFlow() {
   state.hasCardPreference = true;
   state.noCardAccessValidated = false;
+  state.noCardAccessRequested = false;
   state.termsAccepted = true;
   closeModal();
   updateMachineStatus();
@@ -1678,13 +1681,8 @@ if (modalRoot) {
       return;
     }
 
-    if (biometricButton.dataset.biometricChoice === "remember") {
-      showBiometricRememberNotice();
-      return;
-    }
-
-    if (biometricButton.dataset.biometricChoice === "unknown") {
-      showBiometricGuidanceNotice();
+    if (biometricButton.dataset.biometricChoice === "continue") {
+      closeModal();
       return;
     }
   });

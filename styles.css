@@ -468,6 +468,11 @@ body.touch-mode .side-buttons {
   margin-top: 30px;
 }
 
+.modal-actions-center {
+  grid-template-columns: minmax(260px, 1fr);
+  justify-content: center;
+}
+
 .modal-button {
   min-height: 78px;
   border: 0;
@@ -1018,8 +1023,8 @@ body.touch-mode .side-buttons {
   font-weight: 800;
   line-height: 1.05;
   text-align: center;
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
+  writing-mode: horizontal-tb;
+  transform: none;
 }
 
 .transaction-panel-main {
