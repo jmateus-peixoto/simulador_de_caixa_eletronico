@@ -63,7 +63,9 @@ const state = {
   hasCardPreference: null,
   hardwareAnimation: null,
   animationTimeout: null,
-  nextCardAction: null
+  nextCardAction: null,
+  customWithdrawInput: "",
+  customWithdrawError: ""
 };
 
 const CARD_READING_DELAY = 10000;
@@ -73,6 +75,15 @@ function formatCurrency(value) {
     style: "currency",
     currency: "BRL"
   }).format(value);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function clampNumber(value, min, max) {
@@ -989,7 +1000,11 @@ function getCurrentScreen() {
           label: "Outros Valores",
           wide: true,
           indices: [3, 7],
-          action: () => showNotice("Outros valores", "Para manter o fluxo fiel às fotos, deixei os valores fixos principais desta simulação.")
+          action: () => {
+            state.customWithdrawInput = "";
+            state.customWithdrawError = "";
+            goTo("customAmount");
+          }
         }
       ]);
 
@@ -1006,6 +1021,82 @@ function getCurrentScreen() {
               <div class="bank-grid bank-selection-grid">
                 ${options.map(renderBankButton).join("")}
               </div>
+              ${renderTouchNote()}
+            </div>
+          </section>
+        `
+      };
+    },
+    customAmount() {
+      const options = normalizeOptions([
+        {
+          slot: "l4",
+          label: "Voltar",
+          action: () => {
+            state.customWithdrawError = "";
+            goTo("amountMenu", { push: false });
+          }
+        },
+        { slot: "r4", label: "Confirmar", action: () => handleCustomWithdrawSubmit() }
+      ]);
+      const value = escapeHtml(state.customWithdrawInput);
+      const hasError = Boolean(state.customWithdrawError);
+      const safeError = escapeHtml(state.customWithdrawError);
+      const errorMarkup = hasError
+        ? `<p class="custom-amount-feedback is-error">${safeError}</p>`
+        : "";
+      const keypadMarkup = `
+          <div class="custom-keypad-modal" role="region" aria-label="Teclado numérico">
+            <div class="custom-keypad-panel">
+              <div class="custom-keypad-header">
+                <strong>Teclado numérico</strong>
+              </div>
+              <label class="custom-keypad-label" for="customAmountInput">Valor desejado (R$)</label>
+              <input
+                id="customAmountInput"
+                class="custom-amount-input custom-amount-input-modal"
+                type="text"
+                inputmode="decimal"
+                autocomplete="off"
+                placeholder="Ex.: 70,00"
+                value="${value}"
+              >
+              <div class="custom-keypad-grid">
+                <button type="button" data-custom-key="1">1</button>
+                <button type="button" data-custom-key="2">2</button>
+                <button type="button" data-custom-key="3">3</button>
+                <button type="button" data-custom-key="4">4</button>
+                <button type="button" data-custom-key="5">5</button>
+                <button type="button" data-custom-key="6">6</button>
+                <button type="button" data-custom-key="7">7</button>
+                <button type="button" data-custom-key="8">8</button>
+                <button type="button" data-custom-key="9">9</button>
+                <button type="button" data-custom-key-action="clear">C</button>
+                <button type="button" data-custom-key="0">0</button>
+                <button type="button" data-custom-key-action="backspace">Apagar</button>
+                <button type="button" class="is-wide" data-custom-key="00">00</button>
+              </div>
+              <div class="custom-keypad-actions">
+                <button type="button" class="custom-keypad-action custom-keypad-action-anula" data-custom-keypad-anula>Anula</button>
+                <button type="button" class="custom-keypad-action custom-keypad-action-confirma" data-custom-keypad-confirma>Confirma</button>
+              </div>
+              ${errorMarkup}
+              <p class="custom-keypad-note">Use valores inteiros. Ex.: 70 ou 120.</p>
+            </div>
+          </div>
+        `;
+
+      return {
+        options,
+        html: `
+          <section class="atm-screen bank-screen">
+            <div class="bank-header">
+              <span class="bank-logo">Santander</span>
+              <span class="bank-domain">www.santander.com.br</span>
+            </div>
+            <div class="bank-content bank-selection-content custom-amount-content">
+              <h1 class="bank-title">Digite o <strong>Outro Valor</strong></h1>
+              ${keypadMarkup}
               ${renderTouchNote()}
             </div>
           </section>
@@ -1359,6 +1450,23 @@ function bindScreenButtons() {
     });
   }
 
+  const customAmountInput = document.getElementById("customAmountInput");
+  if (customAmountInput) {
+    customAmountInput.addEventListener("input", (event) => {
+      state.customWithdrawInput = event.target.value;
+      state.customWithdrawError = "";
+    });
+
+    customAmountInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+
+      event.preventDefault();
+      handleCustomWithdrawSubmit();
+    });
+  }
+
 }
 
 function updateSideButtons() {
@@ -1568,6 +1676,90 @@ function startWithdraw(amount) {
   }, 1300);
 }
 
+function parseCustomWithdrawAmount(value) {
+  if (!value) {
+    return NaN;
+  }
+
+  const normalized = String(value)
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function canDispenseWithAvailableNotes(amount) {
+  const roundedAmount = Math.round(amount);
+  const maxHundreds = Math.floor(roundedAmount / 100);
+
+  for (let notes100 = 0; notes100 <= maxHundreds; notes100 += 1) {
+    const remainingAfterHundreds = roundedAmount - (notes100 * 100);
+    const maxFifties = Math.floor(remainingAfterHundreds / 50);
+
+    for (let notes50 = 0; notes50 <= maxFifties; notes50 += 1) {
+      const remaining = remainingAfterHundreds - (notes50 * 50);
+      if (remaining % 20 === 0) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function validateCustomWithdrawAmount(amount) {
+  if (!Number.isFinite(amount)) {
+    return "Digite um valor válido.";
+  }
+
+  if (amount <= 0) {
+    return "Digite um valor maior que zero.";
+  }
+
+  if (!Number.isInteger(amount)) {
+    return "Este caixa libera apenas valores sem centavos.";
+  }
+
+  if (amount < 20) {
+    return "O saque mínimo é de R$ 20,00.";
+  }
+
+  if (!canDispenseWithAvailableNotes(amount)) {
+    return "Valor indisponível com as notas de R$ 20, R$ 50 e R$ 100.";
+  }
+
+  if (account.balance < amount) {
+    return `Saldo insuficiente. Saldo disponível: ${formatCurrency(account.balance)}.`;
+  }
+
+  return "";
+}
+
+function handleCustomWithdrawSubmit() {
+  const amount = parseCustomWithdrawAmount(state.customWithdrawInput);
+  const validationError = validateCustomWithdrawAmount(amount);
+
+  if (validationError) {
+    state.customWithdrawError = validationError;
+    renderScreen();
+    return;
+  }
+
+  state.customWithdrawError = "";
+  startWithdraw(amount);
+}
+
+function appendCustomWithdrawInput(text) {
+  const current = String(state.customWithdrawInput || "");
+  const onlyDigits = current.replace(/\D/g, "");
+  const addition = String(text).replace(/\D/g, "");
+  const nextDigits = `${onlyDigits}${addition}`.slice(0, 6);
+  state.customWithdrawInput = nextDigits;
+  state.customWithdrawError = "";
+}
+
 function completeWithdraw() {
   const amount = state.selectedAmount || 0;
   account.balance -= amount;
@@ -1709,6 +1901,46 @@ if (onboardingRoot) {
   });
 }
 
+if (screenRoot) {
+  screenRoot.addEventListener("click", (event) => {
+    const keypadAnulaButton = event.target.closest("[data-custom-keypad-anula]");
+    if (keypadAnulaButton) {
+      state.customWithdrawError = "";
+      goTo("amountMenu", { push: false });
+      return;
+    }
+
+    const keypadConfirmaButton = event.target.closest("[data-custom-keypad-confirma]");
+    if (keypadConfirmaButton) {
+      handleCustomWithdrawSubmit();
+      return;
+    }
+
+    const keypadNumberButton = event.target.closest("[data-custom-key]");
+    if (keypadNumberButton) {
+      appendCustomWithdrawInput(keypadNumberButton.dataset.customKey || "");
+      renderScreen();
+      return;
+    }
+
+    const keypadActionButton = event.target.closest("[data-custom-key-action]");
+    if (keypadActionButton) {
+      const action = keypadActionButton.dataset.customKeyAction;
+      const digitsOnly = String(state.customWithdrawInput || "").replace(/\D/g, "");
+      if (action === "backspace") {
+        state.customWithdrawInput = digitsOnly.slice(0, -1);
+      } else if (action === "clear") {
+        state.customWithdrawInput = "";
+      }
+      state.customWithdrawError = "";
+      renderScreen();
+      return;
+    }
+
+    return;
+  });
+}
+
 cardToggle.addEventListener("click", () => {
   if (isInteractionLocked()) {
     return;
@@ -1771,6 +2003,11 @@ backButton.addEventListener("click", () => {
 
   if (["amountMenu", "balance", "statementOffer", "otherServices", "notice"].includes(state.currentScreen)) {
     goTo("bankMenu", { push: false });
+    return;
+  }
+
+  if (state.currentScreen === "customAmount") {
+    goTo("amountMenu", { push: false });
     return;
   }
 
